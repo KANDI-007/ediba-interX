@@ -457,7 +457,78 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
   }, [state.documents, state.suppliersList, state.supplierInvoices, state.clients, state.discharges, state.contractOrders, state.bankAccounts, state.articlesDirectory, state.articleCategories, state.articleLots, state.articles]);
 
+  // Charger les données depuis Supabase au démarrage
   useEffect(() => {
+    const loadFromSupabase = async () => {
+      try {
+        // Vérifier la connexion Supabase
+        const connected = await checkSupabaseConnection();
+        if (!connected) {
+          console.warn('⚠️ Supabase non connecté - Utilisation de localStorage');
+          return;
+        }
+        
+        setSupabaseEnabled(true);
+        console.log('✅ Supabase connecté - Chargement des données...');
+        
+        // Charger les données depuis Supabase
+        const [documents, clients, suppliers, articles, categories, discharges] = await Promise.all([
+          getDocumentsFromSupabase().catch(() => []),
+          getClientsFromSupabase().catch(() => []),
+          getSuppliersFromSupabase().catch(() => []),
+          getArticlesFromSupabase().catch(() => []),
+          getArticleCategoriesFromSupabase().catch(() => []),
+          getDischargesFromSupabase().catch(() => []),
+        ]);
+        
+        // Mettre à jour l'état avec les données Supabase
+        setState(prev => ({
+          ...prev,
+          documents: documents.length > 0 ? documents : prev.documents,
+          clients: clients.length > 0 ? clients : prev.clients,
+          suppliersList: suppliers.length > 0 ? suppliers : prev.suppliersList,
+          articles: articles.length > 0 ? articles : prev.articles,
+          articleCategories: categories.length > 0 ? categories : prev.articleCategories,
+          discharges: discharges.length > 0 ? discharges : prev.discharges,
+        }));
+        
+        // Vérifier et effectuer la migration si nécessaire
+        if (!isMigrationDone() && user) {
+          const needsMigration = await checkMigrationNeeded();
+          if (needsMigration) {
+            console.log('🔄 Migration des données depuis localStorage...');
+            const result = await migrateAllDataToSupabase(user.id);
+            if (result.success) {
+              markMigrationAsDone();
+              console.log('✅ Migration terminée:', result.migrated);
+              // Recharger les données après migration
+              const [newDocs, newClients, newSuppliers] = await Promise.all([
+                getDocumentsFromSupabase().catch(() => []),
+                getClientsFromSupabase().catch(() => []),
+                getSuppliersFromSupabase().catch(() => []),
+              ]);
+              setState(prev => ({
+                ...prev,
+                documents: newDocs.length > 0 ? newDocs : prev.documents,
+                clients: newClients.length > 0 ? newClients : prev.clients,
+                suppliersList: newSuppliers.length > 0 ? newSuppliers : prev.suppliersList,
+              }));
+            }
+          }
+        }
+      } catch (error) {
+        console.error('❌ Erreur lors du chargement depuis Supabase:', error);
+        setSupabaseEnabled(false);
+      }
+    };
+    
+    loadFromSupabase();
+  }, [user]);
+
+  // Charger depuis localStorage si Supabase n'est pas disponible
+  useEffect(() => {
+    if (supabaseEnabled) return; // Ne pas charger depuis localStorage si Supabase est actif
+    
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       
