@@ -4,7 +4,7 @@ import { Building2 } from 'lucide-react';
 interface LogoIconProps {
   className?: string;
   size?: number;
-  variant?: 'default' | 'gradient' | 'simple';
+  variant?: 'default' | 'gradient' | 'simple' | 'image';
 }
 
 const LogoIcon: React.FC<LogoIconProps> = ({ 
@@ -13,6 +13,28 @@ const LogoIcon: React.FC<LogoIconProps> = ({
   variant = 'default'
 }) => {
   const baseClasses = 'transition-all duration-300';
+  
+  // Utiliser le logo image de l'entreprise si demandé
+  if (variant === 'image') {
+    return (
+      <div className={`relative ${baseClasses} ${className}`}>
+        <img
+          src="/src/image/imagelogo/LOGO-EDIBA-INTER.jpg"
+          alt="EDIBA INTER"
+          className="object-contain"
+          style={{
+            height: `${size}px`,
+            width: 'auto',
+          }}
+          onError={(e) => {
+            // Fallback vers l'icône si l'image ne charge pas
+            const target = e.target as HTMLImageElement;
+            target.style.display = 'none';
+          }}
+        />
+      </div>
+    );
+  }
   
   // Style par défaut avec gradient professionnel
   if (variant === 'default') {
