@@ -17,6 +17,13 @@ import type {
   LineItem,
 } from '../contexts/DataContext';
 
+// Fonction pour valider si une chaîne est un UUID valide
+function isValidUUID(str: string | null | undefined): boolean {
+  if (!str) return false;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(str);
+}
+
 // ============================================================================
 // DOCUMENTS (Factures, Devis, BL, etc.)
 // ============================================================================
@@ -64,14 +71,20 @@ export async function saveDocumentToSupabase(
     // Trouver ou créer le client
     let clientId: string | null = null;
     if (document.client) {
-      const { data: clientData } = await supabase
+      const { data: clientData, error: clientError } = await supabase
         .from('clients')
         .select('id')
         .eq('raison_sociale', document.client)
-        .single();
+        .maybeSingle(); // Utiliser maybeSingle au lieu de single pour éviter les erreurs si aucun résultat
       
-      if (clientData) {
+      if (clientError) {
+        console.warn('⚠️ Erreur lors de la recherche du client:', clientError);
+      }
+      
+      if (clientData && isValidUUID(clientData.id)) {
         clientId = clientData.id;
+      } else {
+        console.warn('⚠️ Client non trouvé dans Supabase ou ID invalide:', document.client);
       }
     }
 
@@ -97,7 +110,7 @@ export async function saveDocumentToSupabase(
       objet: 'CONSOMMABLE',
       total_ht: calculateTotalHT(document.items),
       total_ttc: calculateTotalTTC(document.items, document.tva),
-      created_by: userId || null,
+      created_by: isValidUUID(userId) ? userId : null, // Ne pas utiliser userId si ce n'est pas un UUID valide
     };
     
     // Si on a un ID personnalisé, on peut l'utiliser comme référence unique
@@ -150,7 +163,7 @@ export async function saveDocumentToSupabase(
         payment_date: payment.date,
         payment_method: 'Espèces', // Par défaut
         note: payment.note || null,
-        created_by: userId || null,
+        created_by: isValidUUID(userId) ? userId : null,
       }));
 
       const { error: paymentsError } = await supabase
@@ -620,7 +633,7 @@ export async function saveDischargeToSupabase(
           lieu: discharge.lieu,
           objet: 'CONSOMMABLE',
           signature_data: discharge.signature || null,
-          created_by: userId || null,
+          created_by: isValidUUID(userId) ? userId : null,
         },
       ])
       .select()
