@@ -1,4 +1,54 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { useAuth } from './AuthContext';
+import {
+  saveDocumentToSupabase,
+  updateDocumentInSupabase,
+  deleteDocumentFromSupabase,
+  saveClientToSupabase,
+  updateClientInSupabase,
+  deleteClientFromSupabase,
+  saveSupplierToSupabase,
+  saveArticleToSupabase,
+  saveDischargeToSupabase,
+  getDocumentsFromSupabase,
+  getClientsFromSupabase,
+  getSuppliersFromSupabase,
+  getArticlesFromSupabase,
+  getArticleCategoriesFromSupabase,
+  getDischargesFromSupabase,
+} from '../services/dataService';
+import {
+  checkMigrationNeeded,
+  migrateAllDataToSupabase,
+  isMigrationDone,
+  markMigrationAsDone,
+} from '../services/migrationService';
+import { checkSupabaseConnection } from '../lib/supabase';
+import { useAuth } from './AuthContext';
+import {
+  saveDocumentToSupabase,
+  updateDocumentInSupabase,
+  deleteDocumentFromSupabase,
+  saveClientToSupabase,
+  updateClientInSupabase,
+  deleteClientFromSupabase,
+  saveSupplierToSupabase,
+  saveArticleToSupabase,
+  saveDischargeToSupabase,
+  getDocumentsFromSupabase,
+  getClientsFromSupabase,
+  getSuppliersFromSupabase,
+  getArticlesFromSupabase,
+  getArticleCategoriesFromSupabase,
+  getDischargesFromSupabase,
+} from '../services/dataService';
+import {
+  checkMigrationNeeded,
+  migrateAllDataToSupabase,
+  isMigrationDone,
+  markMigrationAsDone,
+} from '../services/migrationService';
+import { checkSupabaseConnection } from '../lib/supabase';
 
 export type DocumentType = 'proforma' | 'delivery' | 'invoice' | 'contract' | 'order';
 
@@ -309,6 +359,9 @@ interface DataContextValue extends DataState {}
 const DataContext = createContext<DataContextValue | undefined>(undefined);
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
+  const [supabaseEnabled, setSupabaseEnabled] = useState(false);
+  
   const [state, setState] = useState<DataState>({
     documents: [],
     suppliers: [],
@@ -2697,14 +2750,32 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     articleCategories: state.articleCategories,
     articleLots: state.articleLots,
     articles: state.articles,
-    saveDocument: (docInput) => {
+    saveDocument: async (docInput) => {
       const year = new Date(docInput.date).getFullYear();
       const seq = nextSequence(state.documents, docInput.type, year);
       const reference = `${year}-${String(seq).padStart(4, '0')}`;
       const id = formatNumberNew(docInput.type, year, seq);
       const doc: CustomerDocument = { ...docInput, id, reference, payments: [] };
-      setState(s => ({ ...s, documents: [doc, ...s.documents] }));
       
+      // Sauvegarder dans Supabase si connecté
+      if (supabaseEnabled && user) {
+        try {
+          const saved = await saveDocumentToSupabase(docInput, user.id);
+          if (saved) {
+            console.log('✅ Document sauvegardé dans Supabase:', saved.id);
+            // Utiliser le document sauvegardé depuis Supabase
+            setState(s => ({ ...s, documents: [saved, ...s.documents.filter(d => d.id !== saved.id)] }));
+            return saved;
+          } else {
+            console.warn('⚠️ Échec sauvegarde Supabase, utilisation locale');
+          }
+        } catch (error) {
+          console.error('❌ Erreur sauvegarde Supabase:', error);
+        }
+      }
+      
+      // Sauvegarder localement (localStorage + état)
+      setState(s => ({ ...s, documents: [doc, ...s.documents] }));
       return doc;
     },
     addPayment: (docId, payment) => {
@@ -2768,10 +2839,36 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       return inv;
     },
-    updateDocument: (id, partial) => {
+    updateDocument: async (id, partial) => {
+      // Mettre à jour dans Supabase si connecté
+      if (supabaseEnabled) {
+        try {
+          const success = await updateDocumentInSupabase(id, partial);
+          if (success) {
+            console.log('✅ Document mis à jour dans Supabase:', id);
+          }
+        } catch (error) {
+          console.error('❌ Erreur mise à jour Supabase:', error);
+        }
+      }
+      
+      // Mettre à jour localement
       setState(st => ({ ...st, documents: st.documents.map(d => d.id === id ? { ...d, ...partial } : d) }));
     },
-    deleteDocument: (id) => {
+    deleteDocument: async (id) => {
+      // Supprimer dans Supabase si connecté
+      if (supabaseEnabled) {
+        try {
+          const success = await deleteDocumentFromSupabase(id);
+          if (success) {
+            console.log('✅ Document supprimé dans Supabase:', id);
+          }
+        } catch (error) {
+          console.error('❌ Erreur suppression Supabase:', error);
+        }
+      }
+      
+      // Supprimer localement
       setState(st => ({
         ...st,
         documents: st.documents.filter(d => d.id !== id)
@@ -2843,13 +2940,29 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }));
     },
     // CRUD Articles avancés
-    addAdvancedArticle: (articleInput) => {
+    addAdvancedArticle: async (articleInput) => {
       const article: Article = { 
         id: `ART-${Date.now()}`, 
         dateCreation: new Date().toISOString(),
         lastUpdated: new Date().toISOString(),
         ...articleInput 
       };
+      
+      // Sauvegarder dans Supabase si connecté
+      if (supabaseEnabled) {
+        try {
+          const saved = await saveArticleToSupabase(articleInput);
+          if (saved) {
+            console.log('✅ Article sauvegardé dans Supabase:', saved.id);
+            setState(st => ({ ...st, articles: [saved, ...st.articles.filter(a => a.id !== saved.id)] }));
+            return saved;
+          }
+        } catch (error) {
+          console.error('❌ Erreur sauvegarde Supabase:', error);
+        }
+      }
+      
+      // Sauvegarder localement
       setState(st => ({ ...st, articles: [article, ...st.articles] }));
       return article;
     },
@@ -3030,7 +3143,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }));
     },
     // Gestion des clients
-    addClient: (clientInput) => {
+    addClient: async (clientInput) => {
       const id = `CLI-${Date.now()}`;
       // Gérer la compatibilité avec les anciennes données (migration automatique)
       const client: Client = {
@@ -3045,30 +3158,90 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         soldeImpaye: 0,
         nombreFactures: 0
       };
-      setState(st => ({ ...st, clients: [client, ...st.clients] }));
       
+      // Sauvegarder dans Supabase si connecté
+      if (supabaseEnabled) {
+        try {
+          const saved = await saveClientToSupabase(clientInput);
+          if (saved) {
+            console.log('✅ Client sauvegardé dans Supabase:', saved.id);
+            // Utiliser le client sauvegardé depuis Supabase
+            setState(st => ({ ...st, clients: [saved, ...st.clients.filter(c => c.id !== saved.id)] }));
+            return saved;
+          } else {
+            console.warn('⚠️ Échec sauvegarde Supabase, utilisation locale');
+          }
+        } catch (error) {
+          console.error('❌ Erreur sauvegarde Supabase:', error);
+        }
+      }
+      
+      // Sauvegarder localement (localStorage + état)
+      setState(st => ({ ...st, clients: [client, ...st.clients] }));
       return client;
     },
-    updateClient: (id, partial) => {
+    updateClient: async (id, partial) => {
+      // Mettre à jour dans Supabase si connecté
+      if (supabaseEnabled) {
+        try {
+          const success = await updateClientInSupabase(id, partial);
+          if (success) {
+            console.log('✅ Client mis à jour dans Supabase:', id);
+          }
+        } catch (error) {
+          console.error('❌ Erreur mise à jour Supabase:', error);
+        }
+      }
+      
+      // Mettre à jour localement
       setState(st => ({ 
         ...st, 
         clients: st.clients.map(c => c.id === id ? { ...c, ...partial } : c) 
       }));
     },
-    deleteClient: (id) => {
+    deleteClient: async (id) => {
+      // Supprimer dans Supabase si connecté
+      if (supabaseEnabled) {
+        try {
+          const success = await deleteClientFromSupabase(id);
+          if (success) {
+            console.log('✅ Client supprimé dans Supabase:', id);
+          }
+        } catch (error) {
+          console.error('❌ Erreur suppression Supabase:', error);
+        }
+      }
+      
+      // Supprimer localement
       setState(st => ({
         ...st,
         clients: st.clients.filter(c => c.id !== id)
       }));
     },
     // Gestion des décharges
-    addDischarge: (dischargeInput) => {
+    addDischarge: async (dischargeInput) => {
       const id = `DECHARGE N°${String(state.discharges.length + 1).padStart(3, '0')}`;
       const discharge: Discharge = {
         ...dischargeInput,
         id,
         dateCreation: new Date().toISOString().slice(0, 10)
       };
+      
+      // Sauvegarder dans Supabase si connecté
+      if (supabaseEnabled && user) {
+        try {
+          const saved = await saveDischargeToSupabase(dischargeInput, user.id);
+          if (saved) {
+            console.log('✅ Décharge sauvegardée dans Supabase:', saved.id);
+            setState(st => ({ ...st, discharges: [saved, ...st.discharges.filter(d => d.id !== saved.id)] }));
+            return saved;
+          }
+        } catch (error) {
+          console.error('❌ Erreur sauvegarde Supabase:', error);
+        }
+      }
+      
+      // Sauvegarder localement
       setState(st => ({ ...st, discharges: [discharge, ...st.discharges] }));
       return discharge;
     },
