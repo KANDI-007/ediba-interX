@@ -2832,16 +2832,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (supabaseEnabled && user) {
         try {
           const saved = await saveDocumentToSupabase(docInput, user.id);
-          if (saved) {
+          if (saved && saved.id) {
             console.log('✅ Document sauvegardé dans Supabase:', saved.id);
             // Utiliser le document sauvegardé depuis Supabase
             setState(s => ({ ...s, documents: [saved, ...s.documents.filter(d => d.id !== saved.id)] }));
             return saved;
           } else {
-            console.warn('⚠️ Échec sauvegarde Supabase, utilisation locale');
+            console.warn('⚠️ Échec sauvegarde Supabase - aucun ID retourné, utilisation locale');
+            throw new Error('La sauvegarde a échoué - aucun ID retourné');
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error('❌ Erreur sauvegarde Supabase:', error);
+          // Afficher l'erreur à l'utilisateur
+          alert(`Erreur lors de la sauvegarde: ${error.message || 'Erreur inconnue'}`);
+          // Continuer avec la sauvegarde locale
         }
       }
       

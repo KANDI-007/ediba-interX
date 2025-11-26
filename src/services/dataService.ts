@@ -57,7 +57,7 @@ export interface SupabaseLineItem {
  * Sauvegarde un document dans Supabase
  */
 export async function saveDocumentToSupabase(
-  document: Omit<CustomerDocument, 'id' | 'reference'>,
+  document: Omit<CustomerDocument, 'id' | 'reference'> | CustomerDocument,
   userId?: string
 ): Promise<CustomerDocument | null> {
   try {
@@ -75,37 +75,51 @@ export async function saveDocumentToSupabase(
       }
     }
 
-    // Générer la référence si nécessaire
-    const reference = document.reference || generateDocumentReference(document.type);
+    // Utiliser la référence du document si fournie, sinon générer
+    const reference = (document as CustomerDocument).reference || generateDocumentReference(document.type);
 
+    // Utiliser l'ID du document si fourni (format personnalisé), sinon laisser Supabase générer un UUID
+    const documentId = (document as CustomerDocument).id || undefined;
+    
+    // Préparer les données d'insertion
+    const insertData: any = {
+      type: mapDocumentType(document.type),
+      reference,
+      client_id: clientId,
+      date_creation: document.date,
+      date_echeance: document.dueDate || null,
+      tva: document.tva,
+      statut: document.status,
+      workflow_status: document.workflowStatus || 'draft',
+      parent_document_id: document.parentDocumentId || null,
+      order_number: document.orderNumber || null,
+      contract_order_reference: document.contractOrderReference || null,
+      objet: 'CONSOMMABLE',
+      total_ht: calculateTotalHT(document.items),
+      total_ttc: calculateTotalTTC(document.items, document.tva),
+      created_by: userId || null,
+    };
+    
+    // Si on a un ID personnalisé, on peut l'utiliser comme référence unique
+    // Mais Supabase utilise UUID pour l'ID, donc on stocke notre ID dans un champ custom
+    // Pour l'instant, on laisse Supabase générer l'UUID et on utilise la référence comme identifiant métier
+    
     // Insérer le document
     const { data: docData, error: docError } = await supabase
       .from('documents')
-      .insert([
-        {
-          type: mapDocumentType(document.type),
-          reference,
-          client_id: clientId,
-          date_creation: document.date,
-          date_echeance: document.dueDate || null,
-          tva: document.tva,
-          statut: document.status,
-          workflow_status: document.workflowStatus || 'draft',
-          parent_document_id: document.parentDocumentId || null,
-          order_number: document.orderNumber || null,
-          contract_order_reference: document.contractOrderReference || null,
-          objet: 'CONSOMMABLE',
-          total_ht: calculateTotalHT(document.items),
-          total_ttc: calculateTotalTTC(document.items, document.tva),
-          created_by: userId || null,
-        },
-      ])
+      .insert([insertData])
       .select()
       .single();
 
-    if (docError || !docData) {
+    if (docError) {
       console.error('❌ Erreur lors de la sauvegarde du document:', docError);
-      return null;
+      console.error('❌ Détails de l\'erreur:', JSON.stringify(docError, null, 2));
+      throw new Error(`Erreur Supabase: ${docError.message || 'Erreur inconnue'}`);
+    }
+    
+    if (!docData || !docData.id) {
+      console.error('❌ Aucune donnée retournée ou ID manquant:', docData);
+      throw new Error('La sauvegarde a échoué - aucun ID retourné');
     }
 
     // Insérer les lignes du document
@@ -149,10 +163,18 @@ export async function saveDocumentToSupabase(
     }
 
     // Convertir en format CustomerDocument
-    return convertSupabaseDocumentToCustomerDocument(docData);
+    const converted = convertSupabaseDocumentToCustomerDocument(docData);
+    
+    if (!converted || !converted.id) {
+      console.error('❌ Erreur lors de la conversion du document:', converted);
+      throw new Error('Erreur lors de la conversion du document');
+    }
+    
+    console.log('✅ Document sauvegardé avec succès:', converted.id);
+    return converted;
   } catch (error) {
     console.error('❌ Erreur lors de la sauvegarde du document:', error);
-    return null;
+    throw error; // Propager l'erreur au lieu de retourner null
   }
 }
 
@@ -670,8 +692,12 @@ function calculateTotalTTC(items: LineItem[], tva: number): number {
 }
 
 function convertSupabaseDocumentToCustomerDocument(doc: any): CustomerDocument {
+  // Utiliser la référence comme ID métier si disponible, sinon l'UUID Supabase
+  // Mais pour la compatibilité, on préfère utiliser la référence comme ID principal
+  const documentId = doc.reference || doc.id;
+  
   return {
-    id: doc.id,
+    id: documentId, // Utiliser la référence comme ID métier
     type: doc.type === 'bl' ? 'delivery' : doc.type === 'proforma' ? 'proforma' : 'invoice',
     reference: doc.reference,
     date: doc.date_creation,
